@@ -1,12 +1,630 @@
 <!DOCTYPE html>
+
 <html lang="zh-CN">
+
 <head>
+
   <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
   <title>Scientific Figure Generator</title>
+
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+
+    body {
+      margin: 0;
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+
+      background: #f5f6f8;
+      color: #1f2328;
+    }
+
+
+    .app {
+      max-width: 960px;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 32px 20px;
+    }
+
+
+    header {
+      margin-bottom: 24px;
+    }
+
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+
+
+    .subtitle {
+      margin-top: 8px;
+      color: #666;
+    }
+
+
+    #chat {
+      flex: 1;
+
+      background: white;
+
+      border: 1px solid #ddd;
+      border-radius: 14px;
+
+      padding: 20px;
+
+      min-height: 520px;
+
+      overflow-y: auto;
+    }
+
+
+    .message {
+      margin-bottom: 18px;
+      display: flex;
+      flex-direction: column;
+    }
+
+
+    .message.user {
+      align-items: flex-end;
+    }
+
+
+    .message.assistant {
+      align-items: flex-start;
+    }
+
+
+    .bubble {
+      max-width: 82%;
+
+      padding: 12px 16px;
+
+      border-radius: 12px;
+
+      white-space: pre-wrap;
+      line-height: 1.6;
+
+      overflow-wrap: anywhere;
+    }
+
+
+    .user .bubble {
+      background: #1f6feb;
+      color: white;
+    }
+
+
+    .assistant .bubble {
+      background: #f0f2f4;
+      color: #222;
+    }
+
+
+    .bubble a {
+      color: #0969da;
+      word-break: break-all;
+    }
+
+
+    .result-image {
+      display: block;
+
+      max-width: min(100%, 720px);
+
+      margin-top: 12px;
+
+      border-radius: 8px;
+
+      border: 1px solid #ddd;
+
+      background: white;
+    }
+
+
+    .input-area {
+      margin-top: 18px;
+
+      display: flex;
+      gap: 12px;
+    }
+
+
+    textarea {
+      flex: 1;
+
+      min-height: 86px;
+
+      resize: vertical;
+
+      padding: 12px;
+
+      font: inherit;
+
+      border: 1px solid #ccc;
+      border-radius: 10px;
+    }
+
+
+    button {
+      width: 120px;
+
+      border: 0;
+      border-radius: 10px;
+
+      background: #1f6feb;
+      color: white;
+
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+
+    #status {
+      margin-top: 10px;
+      min-height: 20px;
+
+      color: #666;
+      font-size: 14px;
+    }
+
+
+  </style>
+
 </head>
 
+
 <body>
-  <h1>Scientific Figure Generator</h1>
-  <p>AI-powered scientific figure generation.</p>
+
+<div class="app">
+
+  <header>
+
+    <h1>
+      Scientific Figure Generator
+    </h1>
+
+    <div class="subtitle">
+      Generate scientific charts and diagrams with AI.
+    </div>
+
+  </header>
+
+
+  <main id="chat">
+
+    <div class="message assistant">
+
+      <div class="bubble">
+        你好！请描述你希望生成的科研图表。
+      </div>
+
+    </div>
+
+  </main>
+
+
+  <div class="input-area">
+
+    <textarea
+      id="input"
+      placeholder="例如：比较三个超分模型在 Set5 上的 PSNR 和 SSIM，绘制分组柱状图。"
+    ></textarea>
+
+    <button id="send">
+      发送
+    </button>
+
+  </div>
+
+
+  <div id="status"></div>
+
+</div>
+
+
+<script>
+
+  // =========================================
+  // 改成你的 Cloudflare Worker 地址
+  // =========================================
+
+  const API_BASE =
+    "scientific-figure-api.bofanh0415.workers.dev";
+
+
+  // 当前是否处于工作流问答节点。
+  let pendingEventId = null;
+
+
+  // 每次打开网页创建一个会话 ID。
+  const chatId =
+    crypto.randomUUID()
+      .replaceAll("-", "")
+      .slice(0, 32);
+
+
+  const uid =
+    crypto.randomUUID()
+      .replaceAll("-", "")
+      .slice(0, 24);
+
+
+  const chat =
+    document.getElementById("chat");
+
+
+  const input =
+    document.getElementById("input");
+
+
+  const sendButton =
+    document.getElementById("send");
+
+
+  const status =
+    document.getElementById("status");
+
+
+
+  function addTextWithLinks(container, text) {
+
+    const regex =
+      /(https?:\/\/[^\s]+)/g;
+
+    const parts =
+      text.split(regex);
+
+
+    for (const part of parts) {
+
+      if (
+        part.startsWith("http://") ||
+        part.startsWith("https://")
+      ) {
+
+        const link =
+          document.createElement("a");
+
+        link.href = part;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = part;
+
+        container.appendChild(link);
+
+      } else {
+
+        container.appendChild(
+          document.createTextNode(part)
+        );
+      }
+    }
+  }
+
+
+
+  function findImageUrl(text) {
+
+    const urls =
+      text.match(/https?:\/\/[^\s]+/g) || [];
+
+
+    for (let url of urls) {
+
+      url =
+        url.replace(/[)\],。；;]+$/, "");
+
+
+      if (
+        url.includes("res.cloudinary.com") ||
+        /\.(png|jpg|jpeg|webp)(\?|$)/i.test(url)
+      ) {
+        return url;
+      }
+    }
+
+
+    return null;
+  }
+
+
+
+  function addMessage(role, text) {
+
+    const message =
+      document.createElement("div");
+
+    message.className =
+      "message " + role;
+
+
+    const bubble =
+      document.createElement("div");
+
+    bubble.className = "bubble";
+
+
+    addTextWithLinks(
+      bubble,
+      text
+    );
+
+
+    message.appendChild(bubble);
+
+
+    if (role === "assistant") {
+
+      const imageUrl =
+        findImageUrl(text);
+
+
+      if (imageUrl) {
+
+        const img =
+          document.createElement("img");
+
+        img.className =
+          "result-image";
+
+        img.src = imageUrl;
+        img.alt = "Generated scientific figure";
+
+        message.appendChild(img);
+      }
+    }
+
+
+    chat.appendChild(message);
+
+    chat.scrollTop =
+      chat.scrollHeight;
+  }
+
+
+
+  function getAssistantContent(data) {
+
+    return (
+      data?.choices?.[0]?.delta?.content
+      || ""
+    );
+  }
+
+
+
+  async function processResponse(data) {
+
+    if (
+      typeof data.code === "number" &&
+      data.code !== 0
+    ) {
+
+      throw new Error(
+        data.message ||
+        ("讯飞错误码：" + data.code)
+      );
+    }
+
+
+    const normalContent =
+      getAssistantContent(data);
+
+
+    if (normalContent.trim()) {
+
+      addMessage(
+        "assistant",
+        normalContent
+      );
+    }
+
+
+    const eventData =
+      data.event_data;
+
+
+    if (
+      eventData &&
+      eventData.event_type === "interrupt"
+    ) {
+
+      pendingEventId =
+        eventData.event_id;
+
+
+      const question =
+        eventData?.value?.content;
+
+
+      if (
+        question &&
+        question !== normalContent
+      ) {
+
+        addMessage(
+          "assistant",
+          question
+        );
+      }
+
+
+      status.textContent =
+        "工作流正在等待你的补充回答。";
+
+      return;
+    }
+
+
+    pendingEventId = null;
+
+    status.textContent =
+      "完成。";
+  }
+
+
+
+  async function sendMessage() {
+
+    const text =
+      input.value.trim();
+
+
+    if (!text) {
+      return;
+    }
+
+
+    addMessage(
+      "user",
+      text
+    );
+
+
+    input.value = "";
+
+    sendButton.disabled = true;
+
+    status.textContent =
+      "正在运行工作流，请稍候……";
+
+
+    try {
+
+      let endpoint;
+
+      let body;
+
+
+      if (pendingEventId) {
+
+        endpoint =
+          API_BASE + "/resume";
+
+        body = {
+          event_id: pendingEventId,
+          content: text
+        };
+
+      } else {
+
+        endpoint =
+          API_BASE + "/chat";
+
+        body = {
+          message: text,
+          uid: uid,
+          chat_id: chatId
+        };
+      }
+
+
+      const response =
+        await fetch(
+          endpoint,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify(body)
+          }
+        );
+
+
+      const data =
+        await response.json();
+
+
+      if (!response.ok) {
+
+        throw new Error(
+          data.error ||
+          data.message ||
+          "请求失败"
+        );
+      }
+
+
+      await processResponse(data);
+
+
+    } catch (error) {
+
+      addMessage(
+        "assistant",
+        "发生错误："
+        + error.message
+      );
+
+      status.textContent =
+        "请求失败。";
+
+    } finally {
+
+      sendButton.disabled = false;
+
+      input.focus();
+    }
+  }
+
+
+
+  sendButton.addEventListener(
+    "click",
+    sendMessage
+  );
+
+
+  input.addEventListener(
+    "keydown",
+    function(event) {
+
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey
+      ) {
+
+        event.preventDefault();
+
+        sendMessage();
+      }
+    }
+  );
+
+
+</script>
+
 </body>
+
 </html>
